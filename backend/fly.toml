@@ -1,0 +1,27 @@
+app = "volley-server"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+
+[[services]]
+  internal_port = 8080
+  protocol      = "tcp"
+
+  [[services.ports]]
+    port     = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port     = 443
+    handlers = ["tls", "http"]
+
+[checks]
+  [checks.alive]
+    type     = "tcp"
+    port     = 8080
+    interval = "15s"
+    timeout  = "5s"
