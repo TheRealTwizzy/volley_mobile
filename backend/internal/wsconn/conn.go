@@ -99,6 +99,7 @@ func (c *conn) readLoop(dispatch func(*conn, protocol.ClientEnvelope)) {
 			if gorillaws.IsUnexpectedCloseError(err,
 				gorillaws.CloseGoingAway,
 				gorillaws.CloseNormalClosure,
+				gorillaws.CloseAbnormalClosure,
 			) {
 				log.Printf("wsconn: unexpected close: %v", err)
 			}
