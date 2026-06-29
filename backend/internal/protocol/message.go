@@ -11,6 +11,13 @@ const (
 	TypeServerPing  = "server.ping"
 	TypeClientPong  = "client.pong"
 	TypeError       = "error"
+
+	TypeRoomCreate  = "room.create"
+	TypeRoomCreated = "room.created"
+	TypeRoomJoin    = "room.join"
+	TypeRoomUpdated = "room.updated"
+	TypeRoomReady   = "room.ready"
+	TypeRoomLeave   = "room.leave"
 )
 
 // ClientEnvelope is the common wrapper for all client→server messages.

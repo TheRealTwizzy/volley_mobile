@@ -29,7 +29,7 @@ func Handler(sessions *auth.Store) http.Handler {
 		}
 		c := newConn(ws)
 		go c.writeLoop()
-		c.readLoop(makeDispatcher(sessions))
+		c.readLoop(makeDispatcher(sessions), nil)
 	})
 }
 
