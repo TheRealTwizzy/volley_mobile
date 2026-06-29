@@ -18,6 +18,18 @@ const (
 	TypeRoomUpdated = "room.updated"
 	TypeRoomReady   = "room.ready"
 	TypeRoomLeave   = "room.leave"
+
+	TypeInputPaddleTarget  = "input.paddle_target"
+	TypeMatchCountdown     = "match.countdown"
+	TypeMatchStarted       = "match.started"
+	TypeMatchSnapshot      = "match.snapshot"
+	TypeMatchScore         = "match.score"
+	TypeMatchRallyReset    = "match.rally_reset"
+	TypeMatchEnded         = "match.ended"
+	TypeMatchReconnect     = "match.reconnect"
+	TypeMatchReconnected   = "match.reconnected"
+	TypePlayerDisconnected = "player.disconnected"
+	TypePlayerReconnected  = "player.reconnected"
 )
 
 // ClientEnvelope is the common wrapper for all client→server messages.
