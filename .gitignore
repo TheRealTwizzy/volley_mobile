@@ -1,0 +1,23 @@
+.superpowers/sdd/
+
+# Go
+backend/bin/
+*.exe
+*.test
+
+# Flutter
+client/.dart_tool/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
+client/build/
+client/.packages
+client/pubspec.lock
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
