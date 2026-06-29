@@ -7,26 +7,24 @@ import (
 
 	"github.com/pong-mobile/backend/internal/auth"
 	"github.com/pong-mobile/backend/internal/lobby"
+	"github.com/pong-mobile/backend/internal/matchmgr"
 	"github.com/pong-mobile/backend/internal/wsconn"
 )
 
 func main() {
 	sessions := auth.NewStore()
+	matchMgr := matchmgr.NewManager(nil)
 	lobbyMgr := lobby.NewManager(func(room *lobby.Room) {
-		// M3 stub: match loop implemented in M4.
-		log.Printf("match start triggered for room %s (stub)", room.Code)
+		matchMgr.StartMatch(room)
 	})
 
 	mux := http.NewServeMux()
-	mux.Handle("/ws", wsconn.Handler(sessions, lobbyMgr))
+	mux.Handle("/ws", wsconn.Handler(sessions, lobbyMgr, matchMgr))
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	addr := ":" + port
-	log.Printf("volley server listening on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatalf("server error: %v", err)
-	}
+	log.Printf("volley server listening on :%s", port)
+	log.Fatal(http.ListenAndServe(":"+port, mux))
 }

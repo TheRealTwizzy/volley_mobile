@@ -10,6 +10,7 @@ import (
 	"github.com/pong-mobile/backend/internal/auth"
 	"github.com/pong-mobile/backend/internal/config"
 	"github.com/pong-mobile/backend/internal/lobby"
+	"github.com/pong-mobile/backend/internal/matchmgr"
 	"github.com/pong-mobile/backend/internal/protocol"
 )
 
@@ -22,7 +23,7 @@ var upgrader = gorillaws.Upgrader{
 
 // Handler returns an http.Handler that upgrades HTTP connections to WebSocket
 // and runs the hello handshake and message dispatch loop.
-func Handler(sessions *auth.Store, mgr *lobby.Manager) http.Handler {
+func Handler(sessions *auth.Store, mgr *lobby.Manager, matchMgr *matchmgr.Manager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -31,8 +32,9 @@ func Handler(sessions *auth.Store, mgr *lobby.Manager) http.Handler {
 		}
 		c := newConn(ws)
 		go c.writeLoop()
-		c.readLoop(makeDispatcher(sessions, mgr), func() {
+		c.readLoop(makeDispatcher(sessions, mgr, matchMgr), func() {
 			mgr.OnDisconnect(c.id)
+			matchMgr.OnDisconnect(c.id)
 		})
 	})
 }
@@ -72,7 +74,7 @@ type readyPayload struct {
 	Ready bool `json:"ready"`
 }
 
-func makeDispatcher(sessions *auth.Store, mgr *lobby.Manager) func(*conn, protocol.ClientEnvelope) {
+func makeDispatcher(sessions *auth.Store, mgr *lobby.Manager, matchMgr *matchmgr.Manager) func(*conn, protocol.ClientEnvelope) {
 	return func(c *conn, env protocol.ClientEnvelope) {
 		// All messages except client.hello and client.pong require a session.
 		if c.session == nil && env.Type != protocol.TypeClientHello && env.Type != protocol.TypeClientPong {
@@ -99,6 +101,22 @@ func makeDispatcher(sessions *auth.Store, mgr *lobby.Manager) func(*conn, protoc
 
 		case protocol.TypeRoomLeave:
 			mgr.LeaveRoom(c.id)
+
+		case protocol.TypeInputPaddleTarget:
+			if c.session == nil {
+				data, _ := protocol.MakeError("unauthorized", "Session required.", env.RequestID, false, 0)
+				c.SendBytes(data)
+				return
+			}
+			matchMgr.HandleInput(c.id, env)
+
+		case protocol.TypeMatchReconnect:
+			if c.session == nil {
+				data, _ := protocol.MakeError("unauthorized", "Session required.", env.RequestID, false, 0)
+				c.SendBytes(data)
+				return
+			}
+			matchMgr.HandleReconnect(c.id, c.session, c, env.Payload)
 
 		default:
 			errMsg, _ := protocol.MakeError("unknown_type", "Message type is not supported.", env.RequestID, false, 0)

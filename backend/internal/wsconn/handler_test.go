@@ -12,6 +12,7 @@ import (
 
 	"github.com/pong-mobile/backend/internal/auth"
 	"github.com/pong-mobile/backend/internal/lobby"
+	"github.com/pong-mobile/backend/internal/matchmgr"
 	"github.com/pong-mobile/backend/internal/protocol"
 	"github.com/pong-mobile/backend/internal/wsconn"
 )
@@ -62,8 +63,9 @@ func sendHello(t *testing.T, conn *gorillaws.Conn, displayName string) {
 func newTestHandler(t *testing.T) (store *auth.Store, mgr *lobby.Manager, srv *httptest.Server) {
 	t.Helper()
 	store = auth.NewStore()
+	mmgr := matchmgr.NewManager(nil)
 	mgr = lobby.NewManager(func(r *lobby.Room) {})
-	srv = httptest.NewServer(wsconn.Handler(store, mgr))
+	srv = httptest.NewServer(wsconn.Handler(store, mgr, mmgr))
 	t.Cleanup(srv.Close)
 	return
 }
@@ -175,7 +177,8 @@ func TestHandler_Upgrade_NonWebSocket_Returns400(t *testing.T) {
 func TestHandler_RoomCreate_Success(t *testing.T) {
 	store := auth.NewStore()
 	mgr := lobby.NewManager(func(r *lobby.Room) {})
-	srv := httptest.NewServer(wsconn.Handler(store, mgr))
+	mmgr := matchmgr.NewManager(nil)
+	srv := httptest.NewServer(wsconn.Handler(store, mgr, mmgr))
 	defer srv.Close()
 
 	conn := dialTest(t, srv)
@@ -206,7 +209,8 @@ func TestHandler_RoomCreate_Success(t *testing.T) {
 func TestHandler_RoomMessage_WithoutHello_Unauthorized(t *testing.T) {
 	store := auth.NewStore()
 	mgr := lobby.NewManager(func(r *lobby.Room) {})
-	srv := httptest.NewServer(wsconn.Handler(store, mgr))
+	mmgr := matchmgr.NewManager(nil)
+	srv := httptest.NewServer(wsconn.Handler(store, mgr, mmgr))
 	defer srv.Close()
 
 	conn := dialTest(t, srv)
@@ -226,4 +230,114 @@ func TestHandler_RoomMessage_WithoutHello_Unauthorized(t *testing.T) {
 	if payload["code"] != "unauthorized" {
 		t.Errorf("expected unauthorized, got %v", payload["code"])
 	}
+}
+
+// readUntil reads messages from conn until it finds one with the given type or
+// times out. Returns the matching message or calls t.Fatal.
+func readUntil(t *testing.T, conn *gorillaws.Conn, wantType string, timeout time.Duration) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn.SetReadDeadline(deadline)
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("readUntil %q: read error: %v", wantType, err)
+		}
+		var msg map[string]any
+		if err := json.Unmarshal(data, &msg); err != nil {
+			t.Fatalf("readUntil %q: invalid JSON: %v", wantType, err)
+		}
+		if msg["type"] == wantType {
+			return msg
+		}
+	}
+	t.Fatalf("readUntil: timed out waiting for %q", wantType)
+	return nil
+}
+
+// TestHandler_MatchStartFlow is an end-to-end integration test:
+// two clients connect, create/join a room, both go ready, and the match
+// starts (countdown → started → at least one snapshot arrives).
+func TestHandler_MatchStartFlow(t *testing.T) {
+	store := auth.NewStore()
+	mmgr := matchmgr.NewManager(nil)
+	mgr := lobby.NewManager(func(r *lobby.Room) {
+		mmgr.StartMatch(r)
+	})
+	srv := httptest.NewServer(wsconn.Handler(store, mgr, mmgr))
+	defer srv.Close()
+
+	// Connect two clients.
+	c1 := dialTest(t, srv)
+	c2 := dialTest(t, srv)
+
+	// ---- Hello handshake ----
+	sendHello(t, c1, "Player1")
+	msg := readUntil(t, c1, protocol.TypeServerHello, 2*time.Second)
+	if msg["type"] != protocol.TypeServerHello {
+		t.Fatalf("c1: expected server.hello")
+	}
+
+	sendHello(t, c2, "Player2")
+	msg = readUntil(t, c2, protocol.TypeServerHello, 2*time.Second)
+	if msg["type"] != protocol.TypeServerHello {
+		t.Fatalf("c2: expected server.hello")
+	}
+
+	// ---- c1 creates room ----
+	c1.WriteJSON(map[string]any{
+		"type":      "room.create",
+		"requestId": "req_create",
+		"sentAt":    time.Now().UnixMilli(),
+		"payload":   map[string]any{"settings": map[string]any{}},
+	})
+
+	created := readUntil(t, c1, "room.created", 2*time.Second)
+	roomCode, _ := created["payload"].(map[string]any)["roomCode"].(string)
+	if roomCode == "" {
+		t.Fatal("room.created: missing roomCode")
+	}
+
+	// ---- c2 joins room ----
+	c2.WriteJSON(map[string]any{
+		"type":      "room.join",
+		"requestId": "req_join",
+		"sentAt":    time.Now().UnixMilli(),
+		"payload":   map[string]any{"roomCode": roomCode},
+	})
+
+	// Both should get room.updated (c1 gets the join notification, c2 gets its own join ack).
+	readUntil(t, c1, "room.updated", 2*time.Second)
+	readUntil(t, c2, "room.updated", 2*time.Second)
+
+	// ---- c1 ready ----
+	c1.WriteJSON(map[string]any{
+		"type":      "room.ready",
+		"requestId": "req_ready1",
+		"sentAt":    time.Now().UnixMilli(),
+		"payload":   map[string]any{"ready": true},
+	})
+	readUntil(t, c1, "room.updated", 2*time.Second)
+	readUntil(t, c2, "room.updated", 2*time.Second)
+
+	// ---- c2 ready → triggers match start ----
+	c2.WriteJSON(map[string]any{
+		"type":      "room.ready",
+		"requestId": "req_ready2",
+		"sentAt":    time.Now().UnixMilli(),
+		"payload":   map[string]any{"ready": true},
+	})
+	readUntil(t, c1, "room.updated", 2*time.Second)
+	readUntil(t, c2, "room.updated", 2*time.Second)
+
+	// ---- Expect match.countdown ----
+	readUntil(t, c1, protocol.TypeMatchCountdown, 2*time.Second)
+	readUntil(t, c2, protocol.TypeMatchCountdown, 2*time.Second)
+
+	// ---- Expect match.started (after ~3s countdown) ----
+	readUntil(t, c1, protocol.TypeMatchStarted, 5*time.Second)
+	readUntil(t, c2, protocol.TypeMatchStarted, 5*time.Second)
+
+	// ---- Expect at least one match.snapshot ----
+	readUntil(t, c1, protocol.TypeMatchSnapshot, 3*time.Second)
 }
