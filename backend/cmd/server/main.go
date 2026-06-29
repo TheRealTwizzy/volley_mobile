@@ -1,31 +1,22 @@
 package main
 
 import (
-	"fmt"
+	"log"
+	"net/http"
 
-	"github.com/pong-mobile/backend/internal/config"
-	"github.com/pong-mobile/backend/internal/match"
+	"github.com/pong-mobile/backend/internal/auth"
+	"github.com/pong-mobile/backend/internal/wsconn"
 )
 
 func main() {
-	state := match.NewMatchState("smoke-test", config.Default)
-	state.Status = match.StatusActive
+	sessions := auth.NewStore()
 
-	// Simulate 30 ticks (1 second of game time).
-	for i := 0; i < 30; i++ {
-		var tr match.TickResult
-		state, tr = match.Tick(state)
-		if tr.Scored {
-			fmt.Printf("tick %d: slot %d scored — P1=%d P2=%d\n",
-				state.ServerTick, tr.ScoringSlot,
-				state.Players[0].Score, state.Players[1].Score)
-			if tr.MatchEnded {
-				fmt.Printf("match ended, winner slot %d\n", tr.WinnerSlot)
-				return
-			}
-			state = match.RallyReset(state, tr.ScoringSlot)
-		}
+	mux := http.NewServeMux()
+	mux.Handle("/ws", wsconn.Handler(sessions))
+
+	addr := ":8080"
+	log.Printf("volley server listening on %s", addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		log.Fatalf("server error: %v", err)
 	}
-	fmt.Printf("smoke test complete: %d ticks, ball at (%.3f, %.3f)\n",
-		state.ServerTick, state.Ball.X, state.Ball.Y)
 }
