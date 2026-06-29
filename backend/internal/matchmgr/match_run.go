@@ -111,6 +111,9 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 			return
 
 		case slot := <-run.reconnectCh:
+			if ctx.Err() != nil {
+				return
+			}
 			// Unpause and handle reconnect
 			paused.Store(false)
 			run.mu.Lock()
@@ -144,7 +147,8 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 			disconnected := false
 			for slot := 0; slot < 2; slot++ {
 				if run.Players[slot].Sender == nil && run.Players[slot].ReconnectDeadline.IsZero() {
-					deadline := time.Now().Add(time.Duration(run.State.Settings.ReconnectWindowMs) * time.Millisecond)
+					reconnectWindowMs := run.State.Settings.ReconnectWindowMs
+					deadline := time.Now().Add(time.Duration(reconnectWindowMs) * time.Millisecond)
 					run.Players[slot].ReconnectDeadline = deadline
 					matchID := run.MatchID
 					disconnSlot := slot
@@ -154,7 +158,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 					run.send(1-disconnSlot, buildPlayerDisconnected(matchID, disconnSlot, deadline))
 
 					// Schedule forfeit
-					time.AfterFunc(time.Duration(run.State.Settings.ReconnectWindowMs)*time.Millisecond, func() {
+					time.AfterFunc(time.Duration(reconnectWindowMs)*time.Millisecond, func() {
 						run.mu.Lock()
 						stillDisconnected := run.Players[disconnSlot].Sender == nil
 						run.mu.Unlock()
@@ -206,6 +210,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 					state := run.State
 					run.mu.Unlock()
 					run.broadcast(buildRallyReset(run.MatchID, state))
+					tickCount = 0
 					paused.Store(false)
 				}(pausedScoringSlot)
 				continue
