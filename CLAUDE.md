@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Real-time 1v1 mobile Pong game. Server-authoritative architecture. Two components: Go backend and Flutter/Flame client.
+**Volley** — real-time 1v1 mobile arcade game (Pong-inspired). Server-authoritative architecture. Two components: Go backend and Flutter/Flame client.
+
+> The game is named **Volley**. Do not use "Pong" as the product name.
 
 ## Stack
 
