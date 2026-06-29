@@ -45,7 +45,20 @@ func (m *Manager) StartMatch(room *lobby.Room) {
 		},
 	}
 
-	run := newMatchRun(matchID, room.Settings, players, m.onEnd)
+	run := newMatchRun(matchID, room.Settings, players, func(r *MatchRun) {
+		m.runs.Delete(r.MatchID)
+		for i := 0; i < 2; i++ {
+			r.mu.Lock()
+			connID := r.Players[i].ConnID
+			r.mu.Unlock()
+			if connID != "" {
+				m.byConn.Delete(connID)
+			}
+		}
+		if m.onEnd != nil {
+			m.onEnd(r)
+		}
+	})
 
 	m.runs.Store(matchID, run)
 	m.byConn.Store(players[0].ConnID, run)

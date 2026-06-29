@@ -103,19 +103,9 @@ func makeDispatcher(sessions *auth.Store, mgr *lobby.Manager, matchMgr *matchmgr
 			mgr.LeaveRoom(c.id)
 
 		case protocol.TypeInputPaddleTarget:
-			if c.session == nil {
-				data, _ := protocol.MakeError("unauthorized", "Session required.", env.RequestID, false, 0)
-				c.SendBytes(data)
-				return
-			}
 			matchMgr.HandleInput(c.id, env)
 
 		case protocol.TypeMatchReconnect:
-			if c.session == nil {
-				data, _ := protocol.MakeError("unauthorized", "Session required.", env.RequestID, false, 0)
-				c.SendBytes(data)
-				return
-			}
 			matchMgr.HandleReconnect(c.id, c.session, c, env.Payload)
 
 		default:

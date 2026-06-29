@@ -340,4 +340,5 @@ func TestHandler_MatchStartFlow(t *testing.T) {
 
 	// ---- Expect at least one match.snapshot ----
 	readUntil(t, c1, protocol.TypeMatchSnapshot, 3*time.Second)
+	readUntil(t, c2, protocol.TypeMatchSnapshot, 3*time.Second)
 }
