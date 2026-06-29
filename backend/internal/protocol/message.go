@@ -32,7 +32,7 @@ type ClientEnvelope struct {
 type ServerEnvelope struct {
 	Type       string `json:"type"`
 	ServerTime int64  `json:"serverTime"`
-	ServerTick int64  `json:"serverTick,omitempty"`
+	ServerTick int64  `json:"serverTick"`
 	Payload    any    `json:"payload"`
 }
 
