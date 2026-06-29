@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pong-mobile/backend/internal/config"
@@ -101,7 +102,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 	defer ticker.Stop()
 
 	tickCount := 0
-	paused := false
+	var paused atomic.Bool
 	var pausedScoringSlot int
 
 	for {
@@ -111,7 +112,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 
 		case slot := <-run.reconnectCh:
 			// Unpause and handle reconnect
-			paused = false
+			paused.Store(false)
 			run.mu.Lock()
 			run.Players[slot].ReconnectDeadline = time.Time{}
 			state := run.State
@@ -123,7 +124,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 			run.send(1-slot, buildPlayerReconnected(run.MatchID, slot))
 
 		case <-ticker.C:
-			if paused {
+			if paused.Load() {
 				continue
 			}
 
@@ -140,6 +141,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 			}
 
 			// Check for newly disconnected players (Sender nil but no deadline set yet)
+			disconnected := false
 			for slot := 0; slot < 2; slot++ {
 				if run.Players[slot].Sender == nil && run.Players[slot].ReconnectDeadline.IsZero() {
 					deadline := time.Now().Add(time.Duration(run.State.Settings.ReconnectWindowMs) * time.Millisecond)
@@ -149,7 +151,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 					run.mu.Unlock()
 
 					// Notify other player of disconnect
-					run.broadcast(buildPlayerDisconnected(matchID, disconnSlot, deadline))
+					run.send(1-disconnSlot, buildPlayerDisconnected(matchID, disconnSlot, deadline))
 
 					// Schedule forfeit
 					time.AfterFunc(time.Duration(run.State.Settings.ReconnectWindowMs)*time.Millisecond, func() {
@@ -157,11 +159,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 						stillDisconnected := run.Players[disconnSlot].Sender == nil
 						run.mu.Unlock()
 						if stillDisconnected {
-							run.mu.Lock()
-							state := run.State
-							run.mu.Unlock()
 							winnerSlot := 1 - disconnSlot
-							_ = state
 							run.broadcast(buildMatchEnded(matchID, winnerSlot, "forfeit"))
 							if run.cancelFn != nil {
 								run.cancelFn()
@@ -169,13 +167,16 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 						}
 					})
 
-					paused = true
-					run.mu.Lock() // re-lock to satisfy defer/unlock pattern below
+					paused.Store(true)
+					disconnected = true
 					break
 				}
 			}
+			if disconnected {
+				continue // skip simulation this tick; lock already released
+			}
 
-			// Advance simulation
+			// Advance simulation (lock still held from drain loop above)
 			newState, result := match.Tick(run.State)
 			run.State = newState
 			run.mu.Unlock()
@@ -195,7 +196,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 				}
 
 				// Pause for rally reset
-				paused = true
+				paused.Store(true)
 				pausedScoringSlot = scoringSlot
 				resetDelay := time.Duration(run.State.Settings.RallyResetMs) * time.Millisecond
 				go func(slot int) {
@@ -205,7 +206,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 					state := run.State
 					run.mu.Unlock()
 					run.broadcast(buildRallyReset(run.MatchID, state))
-					paused = false
+					paused.Store(false)
 				}(pausedScoringSlot)
 				continue
 			}
@@ -226,7 +227,7 @@ var matchLoopActive = func(ctx context.Context, run *MatchRun) {
 type inputPaddleTargetPayload struct {
 	MatchID string  `json:"matchId"`
 	TargetX float64 `json:"targetX"`
-	Seq     int     `json:"seq"`
+	Seq     int     `json:"clientSeq"`
 }
 
 // ParseInputPaddleTarget extracts matchID, targetX, seq from a raw input.paddle_target payload.
