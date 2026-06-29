@@ -76,13 +76,12 @@ func (d *DB) SaveUser(ctx context.Context, sess *auth.Session) error {
 }
 
 // SaveMatch inserts a match record. Idempotent via ON CONFLICT DO NOTHING.
-func (d *DB) SaveMatch(ctx context.Context, matchID, roomCode, p1PlayerID, p2PlayerID string,
-	pointsToWin int, winnerPlayerID string, now time.Time) error {
+// p1PlayerID, p2PlayerID, and winnerPlayerID are *string so callers can pass
+// nil when no valid user exists, avoiding FK violations on empty strings.
+func (d *DB) SaveMatch(ctx context.Context, matchID, roomCode string,
+	p1PlayerID, p2PlayerID *string,
+	pointsToWin int, winnerPlayerID *string, now time.Time) error {
 
-	var winner interface{} = nil
-	if winnerPlayerID != "" {
-		winner = winnerPlayerID
-	}
 	_, err := d.db.ExecContext(ctx, `
 		INSERT INTO matches
 			(id, room_code, player_one_id, player_two_id, status,
@@ -90,7 +89,7 @@ func (d *DB) SaveMatch(ctx context.Context, matchID, roomCode, p1PlayerID, p2Pla
 		VALUES ($1, $2, $3, $4, 'ended', $5, $6, $7, $7, $7)
 		ON CONFLICT (id) DO NOTHING`,
 		matchID, roomCode, p1PlayerID, p2PlayerID,
-		pointsToWin, winner, now)
+		pointsToWin, winnerPlayerID, now)
 	if err != nil {
 		return fmt.Errorf("storage.SaveMatch: %w", err)
 	}
@@ -119,29 +118,36 @@ func (d *DB) SaveMatchResult(ctx context.Context, matchID string, results [2]Slo
 	}
 
 	// 2. Determine winner player ID
-	winnerPlayerID := ""
+	var winnerPlayerID *string
 	for i, r := range results {
-		if r.Result == "win" && sessions[i] != nil {
-			winnerPlayerID = r.PlayerID
+		if r.Result == "win" && sessions[i] != nil && r.PlayerID != "" {
+			id := r.PlayerID
+			winnerPlayerID = &id
 			break
 		}
 	}
 
-	// 3. Insert match row
-	p1ID, p2ID := "", ""
-	if sessions[0] != nil {
-		p1ID = results[0].PlayerID
+	// 3. Insert match row — use nil pointers when no valid player exists
+	//    to avoid FK violations (empty string "" is not a valid users.id).
+	var p1ID, p2ID *string
+	if sessions[0] != nil && results[0].PlayerID != "" {
+		s := results[0].PlayerID
+		p1ID = &s
 	}
-	if sessions[1] != nil {
-		p2ID = results[1].PlayerID
+	if sessions[1] != nil && results[1].PlayerID != "" {
+		s := results[1].PlayerID
+		p2ID = &s
 	}
 	if err := d.SaveMatch(ctx, matchID, roomCode, p1ID, p2ID,
 		pointsToWin, winnerPlayerID, now); err != nil {
 		return fmt.Errorf("SaveMatchResult match: %w", err)
 	}
 
-	// 4. Insert per-slot result rows
+	// 4. Insert per-slot result rows (skip slots with no valid player)
 	for i, r := range results {
+		if r.PlayerID == "" {
+			continue // no valid player to record
+		}
 		id, err := newID()
 		if err != nil {
 			return fmt.Errorf("SaveMatchResult newID slot[%d]: %w", i, err)

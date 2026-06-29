@@ -74,6 +74,9 @@ func main() {
 				results[i].Score = scores[i]
 			}
 
+			// Forfeit check precedes score check. Edge case: if a player disconnects
+			// at the exact moment a score-based match ends, it may be recorded as
+			// forfeit rather than score. Acceptable — both result in a win for the same player.
 			switch {
 			case players[0].Sender == nil && players[1].Sender != nil:
 				// slot 0 forfeited

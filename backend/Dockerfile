@@ -8,7 +8,7 @@ RUN go mod download
 
 # Copy source and build
 COPY . .
-RUN go build -o server ./cmd/server
+RUN CGO_ENABLED=0 go build -o server ./cmd/server
 
 # Stage 2: Runtime image
 FROM alpine:3.19
