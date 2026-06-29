@@ -37,11 +37,13 @@ func (m *Manager) StartMatch(room *lobby.Room) {
 			Sender:    room.Players[0].Conn,
 			ConnID:    room.Players[0].Conn.ID(),
 			SessionID: room.Players[0].Session.ID,
+			PlayerID:  room.Players[0].Session.PlayerID,
 		},
 		{
 			Sender:    room.Players[1].Conn,
 			ConnID:    room.Players[1].Conn.ID(),
 			SessionID: room.Players[1].Session.ID,
+			PlayerID:  room.Players[1].Session.PlayerID,
 		},
 	}
 

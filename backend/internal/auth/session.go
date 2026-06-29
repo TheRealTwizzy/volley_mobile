@@ -39,11 +39,15 @@ func NewSession(displayName string) (Session, error) {
 type Store struct {
 	mu      sync.RWMutex
 	byToken map[string]Session
+	byID    map[string]Session // keyed by Session.ID
 }
 
 // NewStore returns an initialized Store.
 func NewStore() *Store {
-	return &Store{byToken: make(map[string]Session)}
+	return &Store{
+		byToken: make(map[string]Session),
+		byID:    make(map[string]Session),
+	}
 }
 
 // Put adds or replaces a session.
@@ -51,6 +55,7 @@ func (s *Store) Put(session Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.byToken[session.Token] = session
+	s.byID[session.ID] = session
 }
 
 // GetByToken looks up a session by opaque token.
@@ -61,10 +66,21 @@ func (s *Store) GetByToken(token string) (Session, bool) {
 	return sess, ok
 }
 
+// GetBySessionID looks up a session by its short hex Session.ID.
+func (s *Store) GetBySessionID(id string) (Session, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess, ok := s.byID[id]
+	return sess, ok
+}
+
 // Delete removes a session by token.
 func (s *Store) Delete(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if sess, ok := s.byToken[token]; ok {
+		delete(s.byID, sess.ID)
+	}
 	delete(s.byToken, token)
 }
 

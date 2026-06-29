@@ -25,6 +25,7 @@ type PlayerConn struct {
 	Sender            lobby.Sender  // nil if disconnected
 	ConnID            string
 	SessionID         string        // auth.Session.ID for reconnect matching
+	PlayerID          string        // auth.Session.PlayerID for persistence (e.g. "player_abc123")
 	ReconnectDeadline time.Time     // zero = connected
 }
 
@@ -50,6 +51,11 @@ func newMatchRun(matchID string, settings config.Settings, players [2]PlayerConn
 		reconnectCh: make(chan int, 4),
 		onEnd:       onEnd,
 	}
+}
+
+// Mu returns the MatchRun's mutex for external callers that need to snapshot state.
+func (r *MatchRun) Mu() *sync.Mutex {
+	return &r.mu
 }
 
 // send sends data to a single player by slot; no-op if the Sender is nil.
