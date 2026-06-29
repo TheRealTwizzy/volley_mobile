@@ -11,6 +11,7 @@ import (
 	gorillaws "github.com/gorilla/websocket"
 
 	"github.com/pong-mobile/backend/internal/auth"
+	"github.com/pong-mobile/backend/internal/lobby"
 	"github.com/pong-mobile/backend/internal/protocol"
 	"github.com/pong-mobile/backend/internal/wsconn"
 )
@@ -58,10 +59,18 @@ func sendHello(t *testing.T, conn *gorillaws.Conn, displayName string) {
 	}
 }
 
+func newTestHandler(t *testing.T) (store *auth.Store, mgr *lobby.Manager, srv *httptest.Server) {
+	t.Helper()
+	store = auth.NewStore()
+	mgr = lobby.NewManager(func(r *lobby.Room) {})
+	srv = httptest.NewServer(wsconn.Handler(store, mgr))
+	t.Cleanup(srv.Close)
+	return
+}
+
 func TestHandler_HelloHandshake(t *testing.T) {
-	store := auth.NewStore()
-	srv := httptest.NewServer(wsconn.Handler(store))
-	defer srv.Close()
+	store, mgr, srv := newTestHandler(t)
+	_ = mgr
 
 	conn := dialTest(t, srv)
 	sendHello(t, conn, "TestPlayer")
@@ -84,12 +93,11 @@ func TestHandler_HelloHandshake(t *testing.T) {
 	if !ok || hi <= 0 {
 		t.Errorf("heartbeatIntervalMs should be positive, got %v", payload["heartbeatIntervalMs"])
 	}
+	_ = store
 }
 
 func TestHandler_UnknownType_ReturnsError(t *testing.T) {
-	store := auth.NewStore()
-	srv := httptest.NewServer(wsconn.Handler(store))
-	defer srv.Close()
+	_, _, srv := newTestHandler(t)
 
 	conn := dialTest(t, srv)
 	sendHello(t, conn, "T")
@@ -111,9 +119,7 @@ func TestHandler_UnknownType_ReturnsError(t *testing.T) {
 }
 
 func TestHandler_BadJSON_ReturnsError(t *testing.T) {
-	store := auth.NewStore()
-	srv := httptest.NewServer(wsconn.Handler(store))
-	defer srv.Close()
+	_, _, srv := newTestHandler(t)
 
 	conn := dialTest(t, srv)
 
@@ -130,9 +136,7 @@ func TestHandler_BadJSON_ReturnsError(t *testing.T) {
 }
 
 func TestHandler_ClientPong_KeepsConnectionAlive(t *testing.T) {
-	store := auth.NewStore()
-	srv := httptest.NewServer(wsconn.Handler(store))
-	defer srv.Close()
+	_, _, srv := newTestHandler(t)
 
 	conn := dialTest(t, srv)
 	sendHello(t, conn, "T")
@@ -156,9 +160,7 @@ func TestHandler_ClientPong_KeepsConnectionAlive(t *testing.T) {
 }
 
 func TestHandler_Upgrade_NonWebSocket_Returns400(t *testing.T) {
-	store := auth.NewStore()
-	srv := httptest.NewServer(wsconn.Handler(store))
-	defer srv.Close()
+	_, _, srv := newTestHandler(t)
 
 	resp, err := http.Get(srv.URL)
 	if err != nil {
@@ -167,5 +169,61 @@ func TestHandler_Upgrade_NonWebSocket_Returns400(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected 400 for non-WS request, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandler_RoomCreate_Success(t *testing.T) {
+	store := auth.NewStore()
+	mgr := lobby.NewManager(func(r *lobby.Room) {})
+	srv := httptest.NewServer(wsconn.Handler(store, mgr))
+	defer srv.Close()
+
+	conn := dialTest(t, srv)
+	sendHello(t, conn, "Host")
+	readJSON(t, conn) // consume server.hello
+
+	conn.WriteJSON(map[string]any{
+		"type":      "room.create",
+		"requestId": "req_r1",
+		"sentAt":    time.Now().UnixMilli(),
+		"payload":   map[string]any{"settings": map[string]any{}},
+	})
+
+	msg := readJSON(t, conn)
+	if msg["type"] != "room.created" {
+		t.Fatalf("expected room.created, got %v", msg["type"])
+	}
+	payload := msg["payload"].(map[string]any)
+	code, _ := payload["roomCode"].(string)
+	if len(code) != 6 {
+		t.Errorf("roomCode should be 6 chars, got %q", code)
+	}
+	if payload["hostPlayerId"] == nil || payload["hostPlayerId"] == "" {
+		t.Error("room.created must include hostPlayerId")
+	}
+}
+
+func TestHandler_RoomMessage_WithoutHello_Unauthorized(t *testing.T) {
+	store := auth.NewStore()
+	mgr := lobby.NewManager(func(r *lobby.Room) {})
+	srv := httptest.NewServer(wsconn.Handler(store, mgr))
+	defer srv.Close()
+
+	conn := dialTest(t, srv)
+	// Skip hello — send room.create directly
+	conn.WriteJSON(map[string]any{
+		"type":      "room.create",
+		"requestId": "req_r2",
+		"sentAt":    time.Now().UnixMilli(),
+		"payload":   map[string]any{"settings": map[string]any{}},
+	})
+
+	msg := readJSON(t, conn)
+	if msg["type"] != "error" {
+		t.Fatalf("expected error, got %v", msg["type"])
+	}
+	payload := msg["payload"].(map[string]any)
+	if payload["code"] != "unauthorized" {
+		t.Errorf("expected unauthorized, got %v", payload["code"])
 	}
 }
